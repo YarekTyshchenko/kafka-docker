@@ -111,4 +111,17 @@ Three failures is `3 x 2 + 1 = 7` replicas, with minimum ISR of `3 + 1 = 4`
 
 These are minimum settings to maintain availability *and* consistency in face of failures. Minimum settings to maintain just consistency are `f + 1` for both, any failure above `f` will just limit availability
 
+## Performance
 
+Of course we can't just keep adding nodes to the ISR with impunity: Since all nodes are written in sync our response equals the response time of the slowest node in the ISR. With more nodes you get higher chance of outliers ruining your average response.
+
+Scaling kafka in general:
+
+1. Increasing the size of ISR increases availability at expense of response time
+2. Increasing the minimum ISR size increases consistency at the expense of availability during failures
+3. To spread the load of leaders across the cluster create more partitions for your topics
+4. Increase the number of nodes to match the number of leaders (`=` partitions) you have
+
+Off the top of my head I would recommend a cluster with `f=2` so, `5` nodes, a topic with `5` partitions, `3` replicas, with `2` minimum ISR. This doesn't leave much room for growth but should work as a solid cluster with ability to survive a downed node *or* a rolling restart at the same time without loss of Availability. Consistency will be maintained as long as at least 1 node is healthy.
+
+I couldn't have done this research without @RichardHe-awin, so props!
