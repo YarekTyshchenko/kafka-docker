@@ -68,3 +68,47 @@ docker ps -aq | xargs docker rm -vf
 ```
 
 Stop and start individual nodes with `docker stop -t 1 k01` and `docker start k01`
+
+## Resilience Research
+
+We wanted to test what happens with different topic configurations during several broker failures. Specifically understand how to make Kafka cluster fully consistent while surviving `f` failures, and more, sacrificing availability to keep consistency.
+
+Start a cluster and create a topic with 1 partition and 3 replicas. Get a shell in any of the nodes and run describe:
+
+```
+bash-4.3# $KAFKA_HOME/bin/kafka-topics.sh --zookeeper zookeeper:2181 --describe
+Topic:test	PartitionCount:1	ReplicationFactor:3	Configs:
+	Topic: test	Partition: 0	Leader: 1	Replicas: 1,3,4	Isr: 1,3,4
+```
+
+Leader is Broker 1, with 1,3,4 being in sync. In sync replicas are written synchronously to ensure that the data is replicated properly, By default Kafka is configured to be Available, meaning it will let you write to the leader even if ISR is only consists of 1 node. In this case if the leader goes so will your newly written data.
+
+We can re-configure Kafka to favour consistency by having the producer `ack=all` setting, which tells the broker to only ack a write if its been propagated to all of the ISR. We can also add an option to topic creation to refuse writes if ISR is smaller than half of the cluster. This means that there can never be a condition that a network partition creates two clusters both accepting writes.
+
+```
+$KAFKA_HOME/bin/kafka-topics.sh --create --replication-factor 3 --partitions 1 --zookeeper zookeeper:2181 --topic test --config min.insync.replicas=2
+
+Topic:test	PartitionCount:1	ReplicationFactor:3	Configs:min.insync.replicas=2
+	Topic: test	Partition: 0	Leader: 5	Replicas: 5,2,3	Isr: 5,2,3
+```
+
+This cluster can now survive at least 1 failure and maintain Consistency and Availability. 2 failures will sacrifice Availability to keep the data consistent: We cannot accept a write with 1 node in ISR because there is nowhere else to replicate that write to.
+
+The formula goes like this:
+
+```
+Where f is number of failures we want to tolerate:
+
+Replication setting = f x 2 + 1
+Minimum ISR size    = f + 1
+```
+
+To survive 2 failures we need `2 x 2 + 1 = 5` replicas, with minimum ISR of `2 + 1 = 3`.
+
+To survive just 1 failure `1 x 2 + 1 = 3` replicas, with minimum ISR of `1 + 1 = 2`
+
+Three failures is `3 x 2 + 1 = 7` replicas, with minimum ISR of `3 + 1 = 4`
+
+These are minimum settings to maintain availability *and* consistency in face of failures. Minimum settings to maintain just consistency are `f + 1` for both, any failure above `f` will just limit availability
+
+
